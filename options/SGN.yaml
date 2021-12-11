@@ -1,0 +1,39 @@
+name: "SFM_SGN_v3"
+load_name: "./models"
+
+Dataset:
+  baseroot_train: "/mnt/lustre/zhaoyuzhi/dataset/SIDD_Medium_Srgb/mnt/d/SIDD_Medium_Srgb/Data"
+  baseroot_val: "/mnt/lustre/zhaoyuzhi/dataset"
+  baseroot_test: "/mnt/lustre/zhaoyuzhi/dataset/SIDD_Benchmark_Data"
+  patch_per_image: 4
+  crop_size: 320
+  cutblur_prob: 0
+  cutblur_size: 0
+  
+Training:
+  multi_gpu: True
+  cudnn_benchmark: True
+  save_path: "./models"
+  sample_path: "./samples"
+  save_mode: 'epoch'
+  save_by_epoch: 50
+  save_by_iter: 10000
+  epochs: 100
+  train_batch_size: 4
+  val_batch_size: 1
+  lr_g: 0.0001
+  lr_d: 0.0001
+  b1: 0.5
+  b2: 0.999
+  weight_decay: 0.0
+  lr_decrease_epoch: 50
+  num_workers: 8
+  lambda_multiloss: 0
+
+Validation:
+  whether_save: True
+  saveroot: "./val_results"
+  val_batch_size: 1
+  num_workers: 0
+  enable_patch: True
+  patch_size: 512
