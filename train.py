@@ -89,5 +89,5 @@ if __name__ == "__main__":
     attatch_to_config(opt, yaml_args)
     print(opt)
 
-    trainer.L1_Trainer(opt)
+    trainer.Trainer(opt)
     
