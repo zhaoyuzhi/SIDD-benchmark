@@ -13,6 +13,10 @@ def get_model_name(opt, yaml_args):
     for i in range(len(load_name_list)):
         if 'epoch100' in load_name_list[i]:
             return load_name_list[i]
+        elif 'epoch50' in load_name_list[i]:
+            return load_name_list[i]
+        else:
+            print('no valid model found')
 
 def attatch_to_config(opt, yaml_args):
     # Pre-train, saving, and loading parameters

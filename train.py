@@ -89,5 +89,10 @@ if __name__ == "__main__":
     attatch_to_config(opt, yaml_args)
     print(opt)
 
-    trainer.Trainer(opt)
+    if 'MultilevelSGN2' in opt.yaml_path:
+        trainer.Trainer_Multilevel2(opt)
+    elif 'MultilevelSGN' in opt.yaml_path:
+        trainer.Trainer_Multilevel(opt)
+    else:
+        trainer.Trainer(opt)
     

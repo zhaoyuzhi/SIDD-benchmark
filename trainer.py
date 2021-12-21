@@ -14,6 +14,7 @@ from scipy.io import loadmat
 
 import dataset
 import utils
+import network
 
 def Trainer(opt):
     # ----------------------------------------
@@ -177,6 +178,9 @@ def Trainer_Multilevel(opt):
     # Initialize Generator
     generator = utils.create_generator(opt)
     downsampleby2 = nn.AvgPool2d(kernel_size=2, stride=2, padding=0)
+    antialiased_downsampleby2 = nn.Sequential(
+        nn.AvgPool2d(kernel_size=2, stride=1),
+        network.BlurPool(channels=3, stride=2))
 
     # To device
     if opt.multi_gpu:
@@ -184,9 +188,12 @@ def Trainer_Multilevel(opt):
         generator = generator.cuda()
         downsampleby2 = nn.DataParallel(downsampleby2)
         downsampleby2 = downsampleby2.cuda()
+        antialiased_downsampleby2 = nn.DataParallel(antialiased_downsampleby2)
+        antialiased_downsampleby2 = antialiased_downsampleby2.cuda()
     else:
         generator = generator.cuda()
         downsampleby2 = downsampleby2.cuda()
+        antialiased_downsampleby2 = antialiased_downsampleby2.cuda()
 
     # Optimizers
     optimizer_G = torch.optim.Adam(generator.parameters(), lr = opt.lr_g, betas = (opt.b1, opt.b2), weight_decay = opt.weight_decay)
@@ -267,8 +274,12 @@ def Trainer_Multilevel(opt):
             
             # Process patch only for multilevel loss
             if 'Multilevel' in tail_name:
-                halfsize_gt_batch = downsampleby2(gt_batch)
-                onefourthsize_gt_batch = downsampleby2(halfsize_gt_batch)
+                if 'blurpool' in tail_name:
+                    halfsize_gt_batch = antialiased_downsampleby2(gt_batch)
+                    onefourthsize_gt_batch = antialiased_downsampleby2(halfsize_gt_batch)
+                else:
+                    halfsize_gt_batch = downsampleby2(gt_batch)
+                    onefourthsize_gt_batch = downsampleby2(halfsize_gt_batch)
 
             # Train Generator
             optimizer_G.zero_grad()
@@ -292,6 +303,181 @@ def Trainer_Multilevel(opt):
                     L1_Loss = criterion_L1(gen_batch, gt_batch)
                     loss = L1_Loss
 
+            # Overall Loss and optimize
+            loss.backward()
+            optimizer_G.step()
+
+            # Determine approximate time left
+            iters_done = epoch * len(train_loader) + i
+            iters_left = opt.epochs * len(train_loader) - iters_done
+            time_left = datetime.timedelta(seconds = iters_left * (time.time() - prev_time))
+            prev_time = time.time()
+
+            # Print log
+            print("\r[Epoch %d/%d] [Batch %d/%d] [Loss: %.4f] [L1/TanhL1 Loss: %.4f] Time_left: %s" %
+                ((epoch + 1), opt.epochs, i, len(train_loader), loss.item(), L1_Loss.item(), time_left))
+
+            # Save model at certain epochs or iterations
+            save_model(opt, (epoch + 1), (iters_done + 1), len(train_loader), generator)
+
+            # Learning rate decrease at certain epochs
+            adjust_learning_rate(opt, (epoch + 1), optimizer_G)
+            
+        ### Sample data every epoch
+        if (epoch + 1) % 1 == 0:
+            img_list = [input_batch, gen_batch, gt_batch]
+            name_list = ['input', 'pred', 'gt']
+            utils.save_sample_png(sample_folder = sample_folder, sample_name = 'train_epoch%d' % (epoch + 1), \
+                img_list = img_list, name_list = name_list, pixel_max_cnt = 255)
+
+def Trainer_Multilevel2(opt):
+    # ----------------------------------------
+    #       Network training parameters
+    # ----------------------------------------
+
+    # cudnn benchmark
+    cudnn.benchmark = opt.cudnn_benchmark
+
+    # configurations
+    tail_name = opt.yaml_path.split('/')[-1].split('.')[0]
+    save_folder = os.path.join(opt.save_path, tail_name)
+    sample_folder = os.path.join(opt.sample_path, tail_name)
+    utils.check_path(save_folder)
+    utils.check_path(sample_folder)
+
+    # Loss functions
+    criterion_L1 = torch.nn.L1Loss().cuda()
+
+    # Initialize Generator
+    generator = utils.create_generator(opt)
+    downsampleby2 = nn.AvgPool2d(kernel_size=2, stride=2, padding=0)
+    antialiased_downsampleby2 = nn.Sequential(
+        nn.AvgPool2d(kernel_size=2, stride=1),
+        network.BlurPool(channels=3, stride=2))
+
+    # To device
+    if opt.multi_gpu:
+        generator = nn.DataParallel(generator)
+        generator = generator.cuda()
+        downsampleby2 = nn.DataParallel(downsampleby2)
+        downsampleby2 = downsampleby2.cuda()
+        antialiased_downsampleby2 = nn.DataParallel(antialiased_downsampleby2)
+        antialiased_downsampleby2 = antialiased_downsampleby2.cuda()
+    else:
+        generator = generator.cuda()
+        downsampleby2 = downsampleby2.cuda()
+        antialiased_downsampleby2 = antialiased_downsampleby2.cuda()
+
+    # Optimizers
+    optimizer_G = torch.optim.Adam(generator.parameters(), lr = opt.lr_g, betas = (opt.b1, opt.b2), weight_decay = opt.weight_decay)
+    
+    # Learning rate decrease
+    def adjust_learning_rate(opt, epoch, optimizer):
+        target_epoch = opt.epochs - opt.lr_decrease_epoch
+        remain_epoch = opt.epochs - epoch
+        if epoch >= opt.lr_decrease_epoch:
+            lr = opt.lr_g * remain_epoch / target_epoch
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+    
+    # Save the model if pre_train == True
+    def save_model(opt, epoch, iteration, len_dataset, generator):
+        """Save the model at "checkpoint_interval" and its multiple"""
+        # Define the name of trained model
+        if opt.save_mode == 'epoch':
+            model_name = '%s_epoch%d_bs%d.pth' % (opt.network, epoch, opt.train_batch_size)
+        if opt.save_mode == 'iter':
+            model_name = '%s_iter%d_bs%d.pth' % (opt.network, iteration, opt.train_batch_size)
+        save_model_path = os.path.join(save_folder, model_name)
+        if opt.multi_gpu == True:
+            if opt.save_mode == 'epoch':
+                if (epoch % opt.save_by_epoch == 0) and (iteration % len_dataset == 0):
+                    torch.save(generator.module.state_dict(), save_model_path)
+                    print('The trained model is successfully saved at epoch %d' % (epoch))
+            if opt.save_mode == 'iter':
+                if iteration % opt.save_by_iter == 0:
+                    torch.save(generator.module.state_dict(), save_model_path)
+                    print('The trained model is successfully saved at iteration %d' % (iteration))
+        else:
+            if opt.save_mode == 'epoch':
+                if (epoch % opt.save_by_epoch == 0) and (iteration % len_dataset == 0):
+                    torch.save(generator.state_dict(), save_model_path)
+                    print('The trained model is successfully saved at epoch %d' % (epoch))
+            if opt.save_mode == 'iter':
+                if iteration % opt.save_by_iter == 0:
+                    torch.save(generator.state_dict(), save_model_path)
+                    print('The trained model is successfully saved at iteration %d' % (iteration))
+
+    # ----------------------------------------
+    #             Network dataset
+    # ----------------------------------------
+
+    # Handle multiple GPUs
+    gpu_num = torch.cuda.device_count()
+    print("There are %d GPUs used" % gpu_num)
+    opt.train_batch_size *= gpu_num
+    opt.num_workers *= gpu_num
+
+    # Define the dataset
+    trainset = dataset.SIDD_Dataset(opt)
+
+    # Define the dataloader
+    train_loader = DataLoader(trainset, batch_size = opt.train_batch_size, shuffle = True, num_workers = opt.num_workers, pin_memory = True)
+    
+    # ----------------------------------------
+    #                 Training
+    # ----------------------------------------
+
+    # Count start time
+    prev_time = time.time()
+    
+    # For loop training
+    for epoch in range(opt.epochs):
+        for i, (input_batch, gt_batch) in enumerate(train_loader):
+
+            # To device
+            input_batch = input_batch.cuda()
+            gt_batch = gt_batch.cuda()
+
+            # Process patch
+            if len(input_batch.shape) == 5:
+                _, _, C, H, W = input_batch.shape # B, B, C, H, W
+                input_batch = input_batch.view(-1, C, H, W)
+                gt_batch = gt_batch.view(-1, C, H, W)
+            
+            # Process patch only for multilevel loss
+            if 'Multilevel2' in tail_name:
+                if 'blurpool' in tail_name:
+                    halfsize_gt_batch = antialiased_downsampleby2(gt_batch)
+                    onefourthsize_gt_batch = antialiased_downsampleby2(halfsize_gt_batch)
+                    oneeighthsize_gt_batch = antialiased_downsampleby2(onefourthsize_gt_batch)
+                else:
+                    halfsize_gt_batch = downsampleby2(gt_batch)
+                    onefourthsize_gt_batch = downsampleby2(halfsize_gt_batch)
+                    oneeighthsize_gt_batch = downsampleby2(onefourthsize_gt_batch)
+
+            # Train Generator
+            optimizer_G.zero_grad()
+            gen_batch, multilevel_gen_batch = generator(input_batch)
+            
+            # L1 Loss
+            if 'Multilevel2' in tail_name:
+                Multilevel_L1_Loss = criterion_L1(multilevel_gen_batch[0], halfsize_gt_batch) + \
+                    criterion_L1(multilevel_gen_batch[1], onefourthsize_gt_batch) + \
+                        criterion_L1(multilevel_gen_batch[2], oneeighthsize_gt_batch)
+                if 'tanhl1' in tail_name:
+                    L1_Loss = criterion_L1(torch.tanh(gen_batch), torch.tanh(gt_batch))
+                else:
+                    L1_Loss = criterion_L1(gen_batch, gt_batch)
+                loss = L1_Loss + 0.5 * Multilevel_L1_Loss
+            else:
+                if 'tanhl1' in tail_name:
+                    L1_Loss = criterion_L1(torch.tanh(gen_batch), torch.tanh(gt_batch))
+                    loss = L1_Loss
+                else:
+                    L1_Loss = criterion_L1(gen_batch, gt_batch)
+                    loss = L1_Loss
+            
             # Overall Loss and optimize
             loss.backward()
             optimizer_G.step()

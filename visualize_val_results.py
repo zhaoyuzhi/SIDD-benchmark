@@ -38,7 +38,8 @@ def extract_patch(path, keyword_list):
 
     filelist = get_files(path)
     for i in range(len(filelist)):
-        if keyword in filelist[i]:
+        #if keyword in filelist[i]:
+        if keyword == filelist[i].split('\\')[-1]:
             img_name = filelist[i]
 
     img = cv2.imread(img_name)
@@ -55,18 +56,24 @@ if __name__ == "__main__":
         './val_results/gt', \
             './val_results/SGN', \
                 './val_results/SGN_cutblur', \
-                    './val_results/SGNDWT_cutblur', \
+                    './val_results/SGN_DWT_cutblur', \
                         './val_results/MultilevelSGN', \
                             './val_results/MultilevelSGN_cutblur', \
                                 './val_results/MultilevelSGN_cutblur_tanhl1', \
-                                    './val_results/MultilevelSGNDWT_cutblur']
+                                    './val_results/MultilevelSGN_DWT_cutblur', \
+                                        './val_results/REDI']
     
     # kryword - size - h - w
-    keyword_list = [['0_0', 256, 0, 0], \
-        ['10_10', 256, 0, 0], \
-            ['13_13', 256, 0, 0], \
-                ['19_19', 256, 0, 0], \
-                    ['20_20', 256, 0, 0]]
+    keyword_list = [['2_6.png', 256, 0, 0], \
+        ['1_15.png', 256, 0, 0], \
+            ['1_17.png', 256, 0, 0], \
+                ['1_23.png', 256, 0, 0], \
+                    ['3_4.png', 256, 0, 0], \
+                        ['4_23.png', 256, 0, 0], \
+                            ['10_10.png', 256, 0, 0], \
+                                ['2_23.png', 256, 0, 0], \
+                                    ['2_8.png', 256, 0, 0], \
+                                        ['38_1.png', 256, 0, 0]]
 
     for i in range(len(method_list)):
         path = os.path.join(method_list[i])
